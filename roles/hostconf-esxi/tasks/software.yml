@@ -1,0 +1,19 @@
+# install or update some VIB
+
+- name: (logging) check http client ruleset state
+  command: "esxcli network firewall ruleset list --ruleset-id=httpClient"
+  register: http_ruleset_state
+  changed_when: false
+  check_mode: false
+
+- name: (logging) enable syslog client through firewall
+  command: "esxcli network firewall ruleset set --ruleset-id=httpClient --enabled=true"
+  when: http_ruleset_state.stdout.find("false") != -1
+
+- name: (software) make sure required VIBs are installed
+  esxi_vib:
+    name: "{{ item.name }}"
+    url: "{{ item.url }}"
+    # present for install and not update (faster check)
+    state: latest
+  with_items: "{{ vib_list|d([]) }}"

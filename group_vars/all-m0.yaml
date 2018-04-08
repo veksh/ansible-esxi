@@ -1,0 +1,23 @@
+---
+# vars for m0
+dns_domain: "m0.maxidom.ru"
+name_servers:
+  - 10.0.128.1
+  - 10.0.128.2
+
+ntp_servers:
+  - 10.1.131.1
+  - 10.1.131.2
+
+vms_to_autostart:
+  eagle-m0:
+    order: 1
+  hawk-m0:
+    order: 2
+  falcon-u1:
+
+# autostart only listed VMs
+autostart_only_listed: true
+
+# really ok with defaults: "log." + dns_domain
+# syslog_host: log.m6.maxidom.ru

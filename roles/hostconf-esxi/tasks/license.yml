@@ -1,0 +1,15 @@
+- name: (license) get host license
+  shell: "vim-cmd vimsvc/license --show | awk '/serial: / {print $2}'"
+  register: lic_info
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: (license) print host license
+  debug:
+    msg: "license: {{ lic_info.stdout }}"
+  when: lic_info.stdout != ''
+
+- name: (license) assign license
+  command: "vim-cmd vimsvc/license --set {{ esxi_serial }}"
+  when: lic_info.stdout == '' or lic_info.stdout == '00000-00000-00000-00000-00000'

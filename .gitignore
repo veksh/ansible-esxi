@@ -1,0 +1,7 @@
+*.retry
+ansible.log
+*.out
+*.pyc
+*.sublime-project
+*.sublime-workspace
+/tmp/

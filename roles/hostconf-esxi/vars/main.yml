@@ -1,0 +1,7 @@
+---
+# to shorten command lines
+asm_cmd: vim-cmd hostsvc/autostartmanager
+
+esxi_fqdn: "{{ inventory_hostname }}.{{ dns_domain }}"
+
+vmfs_guid: "AA31E02A400F11DB9590000C2911D1B8"

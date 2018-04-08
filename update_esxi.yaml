@@ -1,0 +1,188 @@
+---
+# playbook to update standalone (or vcentered) with offline bundle; will
+# - download it from http server to temp dir
+# - check if profile has something to apply
+# - apply it if not
+# - reboot host if esx-base is updated and allow_reboot=true
+#   - wait for host to came back online
+# - remove temp file afterwards
+
+# export ANSIBLE_CONFIG=/Users/alex/works/sysadm/ansible-study/esxi-mgmt/ansible.esxi.cfg
+# ansible-playbook update_esxi.yaml -l nest-test
+#   -e 'bundle=VMware-ESXi-6.5.0-Update1-5969303-HPE-650.U1.10.1.0.14-Jul2017-depot.zip' \
+#   -e 'src=http://www-distr.m1.maxidom.ru/suse_distr/iso' \
+#   -e 'build=5969303'
+# [ -e 'force_reboot=true']
+
+# args and defaults:
+# - only required arg is offline patch bundle name
+# - default params are in update_esxi_defaults.yaml and for as they are
+#   - server: jackdaw.m1.maxidom.ru
+#   - path: /suse_distr/iso
+#   - temp datastore: 1st defined in host conf, or hostname + "-sys"
+#   - reboot: if required by patch and no VMs are currently running
+
+# check mode is not truly supported (yet?): mb it will be ok just to download
+# patch and dry-run install w/o actual installation
+
+- hosts: all
+
+  # mostly from defaults (included later, but its ok)
+  vars:
+    bundle_url: "{{ src | default(default_http_src) }}/{{ bundle }}"
+    temp_path:  "{{ '/vmfs/volumes/' + temp_dir|default(default_temp_dir) }}"
+
+  tasks:
+
+    - include_vars: "update_esxi_defaults.yaml"
+
+    - name: check that patch bundle name is provided
+      assert:
+        that:
+          - bundle is defined
+        msg: "please specify at least -e bundle=<name>"
+
+    # really optional; could be multi
+    - name: check that play targets exactly one esxi host
+      assert:
+        that:
+          - ansible_play_hosts|length == 1
+          - ansible_os_family == "VMkernel"
+        msg: "please target exactly one vmware host with this play"
+
+    - name: warn that remote kernel is already current
+      debug:
+        msg: "remote kernel is already at build {{ build }}, will not continue"
+      when:
+        - build is defined
+        - ansible_distribution_version.startswith("#1 SMP Release build-" + build )
+
+    # will silently abort execution if kernel is already ok
+    - meta: end_play
+      when:
+        - build is defined
+        - ansible_distribution_version.startswith("#1 SMP Release build-" + build )
+
+    - name: get list of running VMs
+      esxi_vm_info:
+        get_power_state: true
+      register: vm_info_res
+
+    - name: check if reboot is possible (no running VMs)
+      set_fact:
+        reboot_possible: "{{ vm_info_res.power_by_vm | select | list | count == 0 }}"
+
+    - name: check that host is either free of VMs or reboot is forced
+      assert:
+        that:
+          - reboot_possible or force_reboot
+        msg: "please either stop/migrate running VMs or use -e 'force_reboot=true'"
+
+    - name: make sure that temp path exists
+      stat:
+        path: "{{ temp_path }}"
+      register: temp_path_res
+      failed_when: not temp_path_res.stat.exists
+
+    - name: fetch patch bundle to temp path
+      get_url:
+        url: "{{ bundle_url }}"
+        dest: "{{ temp_path }}"
+        tmp_dest: "{{ temp_path }}"
+
+    - name: list profiles in bundle
+      shell: "esxcli software sources profile list -d {{ temp_path }}/{{ bundle }} | awk 'NR>2 {print $1}'"
+      register: profile_res
+      failed_when: profile_res.stdout_lines | count != 1
+      changed_when: false
+
+    - name: dry-run software install
+      shell: >
+        esxcli --formatter=keyvalue software profile update
+        -p {{ profile_res.stdout }}
+        -d {{ temp_path }}/{{bundle }}
+        --dry-run
+      register: update_test_res
+      changed_when: >-
+        not (update_test_res.stdout_lines[0].endswith('The following installers will be applied: []')
+         and update_test_res.stdout_lines[1].endswith('RebootRequired.boolean=false')
+         and update_test_res.stdout_lines[2].endswith('VIBsInstalled.string[] = ')
+         and update_test_res.stdout_lines[3].endswith('VIBsRemoved.string[] = '))
+
+    - name: perform install if required
+      shell: >
+        esxcli --formatter=keyvalue software profile update
+        -p {{ profile_res.stdout }}
+        -d {{ temp_path }}/{{bundle }}
+      register: update_res
+      changed_when: |
+        not (update_res.stdout_lines[0].endswith('The following installers will be applied: []')
+         and update_res.stdout_lines[1].endswith('RebootRequired.boolean=false')
+         and update_res.stdout_lines[2].endswith('VIBsInstalled.string[] = ')
+         and update_res.stdout_lines[3].endswith('VIBsRemoved.string[] = '))
+      when: update_test_res.changed
+
+    - name: print update results
+      debug:
+        var: update_res.stdout_lines
+      when: update_test_res.changed
+
+    - name: check if reboot is required
+      set_fact:
+        reboot_required: "{{ update_test_res.stdout_lines[1].endswith('RebootRequired.boolean=true') }}"
+
+    - name: determine if we will reboot host
+      set_fact:
+        will_reboot: "{{ reboot_required and (force_reboot or reboot_possible) }}"
+
+    - name: print out reboot plans
+      debug:
+        msg: >-
+          reboot:
+          required: {{ reboot_required }}
+          possible: {{ reboot_possible }} (force: {{ force_reboot }})
+          will do: {{ will_reboot }}
+
+    # softer way:
+    # esxcli system maintenanceMode set --enable true
+    # esxcli system shutdown reboot --reason 'patch install'
+    # ...
+    # esxcli system maintenanceMode set --enable false
+    - name: initiate host reboot
+      shell: "/bin/reboot"
+      when: will_reboot
+
+    - name: wait for host to shut down
+      local_action: wait_for
+      args:
+        host: "{{ ansible_fqdn }}"
+        port: 22
+        state: stopped
+        delay: 20
+        timeout: 180
+      when: will_reboot
+
+    - name: wait for host to boot
+      local_action: wait_for
+      args:
+        host: "{{ ansible_fqdn }}"
+        port: 22
+        state: started
+        delay: 30
+        timeout: 300
+      when: will_reboot
+
+    # before that SSH is accessible but requesting password
+    - name: give the host some time to recover
+      pause:
+        seconds: 30
+      when: will_reboot
+
+    - name: reset ssh connection to re-login after host is booted
+      meta: reset_connection
+      when: will_reboot
+
+    - name: clean up patch bundle from temp location
+      file:
+        dest: "{{ temp_path }}/{{ bundle }}"
+        state: absent

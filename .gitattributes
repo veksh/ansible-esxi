@@ -1,0 +1,3 @@
+vault.*   diff=vault
+*.vault.* diff=vault
+*.vault   diff=vault

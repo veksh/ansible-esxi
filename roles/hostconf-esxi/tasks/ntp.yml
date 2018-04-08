@@ -1,0 +1,48 @@
+---
+# required vars: ntp_servers
+
+# could use random element from list of servers, like {{ ntp_servers | random }}
+- name: (ntp) update ntp config file
+  template: 
+    src:   "ntp.conf.j2"
+    dest:  "/etc/ntp.conf"
+    owner: root
+    group: root
+    mode:  0644
+  notify: restart ntpd
+
+- name: (ntp) check ntp client ruleset state
+  command: "esxcli network firewall ruleset list --ruleset-id=ntpClient"
+  register: ntp_ruleset_state
+  changed_when: false
+  check_mode: false
+
+- name: (ntp) enable ntp client through firewall
+  command: "esxcli network firewall ruleset set --ruleset-id=ntpClient --enabled=true"
+  when: ntp_ruleset_state.stdout.find("false") != -1
+  notify: restart ntpd
+
+# "service" is not implemented for esxi; "ntpd is running"/"ntpd is not running"
+- name: (ntp) check ntp service state
+  command: "/etc/init.d/ntpd status"
+  register: ntp_service_state
+  failed_when: ntp_service_state.rc > 3
+  check_mode: false
+  changed_when: false
+
+# notify handler (actually start service) if not yet running
+- name: (ntp) set time if ntp is not running
+  command: "ntpd -g -q"
+  when: ntp_service_state.rc != 0
+  notify: restart ntpd
+
+- name: (ntp) check ntp autostart
+  command: "chkconfig ntpd"
+  register: ntpd_autostart_state
+  failed_when: false
+  check_mode: false
+  changed_when: false
+
+- name: (ntp) enable ntpd autostart
+  command: "chkconfig ntpd on"
+  when: ntpd_autostart_state.rc != 0

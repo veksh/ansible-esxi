@@ -1,0 +1,53 @@
+- name: (network) get portgroups list
+  # skip header (first 2 lines) and Management, print group, vswitch and vlan tag
+  shell: "esxcli network vswitch standard portgroup list | awk -F'  +' 'NR > 2 && !/^(Management Network) / {print $2, $4, $3, $1}'"
+  register: portgroup_list_res
+  changed_when: false
+  check_mode: false
+
+- name: (network) convert portgroup list to structure
+  set_fact:
+    # steps:
+    # - split to to array of tuples like ['adm-srv', 'vSwitch0', '210']
+    # - convert to records like {'name': 'adm-srv', 'switch': 'vSwitch0', 'tag': '210'}
+    # - convert list of those records to dict keyed by name
+    #   - alt: replace "to_dict()" by "list" to get a list of records)
+    # - result is structured like 'esxi_portgroups' from group_vars (keyed by name)
+    portgroups: "{{ portgroup_list_res.stdout_lines
+                    | map('split', ' ', 3)
+                    | map('record', ['vswitch', 'tag', 'clients', 'name'])
+                    | to_dict('name') }}"
+    pgmod: "esxcli network vswitch standard portgroup"
+
+- name: (network) add missed portgroups
+  command: "{{ pgmod }} add -p '{{ item.key }}' -v vSwitch0"
+  with_dict: "{{ esxi_portgroups }}"
+  when: item.key not in portgroups
+
+- name: (network) check that deleted portgroups are free from clients
+  assert: { that: "(portgroups[item].clients|int == 0)" }
+  with_items: "{{ portgroups.keys() }}"
+  when: item not in esxi_portgroups
+
+- name: (network) deleting extra portgroups
+  command: "{{ pgmod }} remove -p '{{ item.key }}' -v vSwitch0"
+  with_dict: "{{ portgroups }}"
+  when: (item.key not in esxi_portgroups) and (item.value.clients|int == 0)
+  # never worked for me in 2.2 
+  #  loop_control:
+  #    label: "{{ item.key }}"
+
+- name: (network) setting vlan tags to correct values
+  command: "{{ pgmod }} set -p '{{ item.key }}' --vlan-id {{ item.value.tag }}"
+  with_dict: "{{ esxi_portgroups }}"
+  when: (item.key not in portgroups) or (item.value.tag != portgroups[item.key]['tag']|int)
+
+- name: (network) check if BPDUs are blocked
+  shell: "esxcli system settings advanced list -o /Net/BlockGuestBPDU | awk '/^   Int Value:/ {print $3}'"
+  register: bpdu_block_res
+  changed_when: false
+  check_mode: false
+
+- name: (network) block BPDUs from guests
+  command: "esxcli system settings advanced set -o /Net/BlockGuestBPDU -i 1"
+  when: 1 != bpdu_block_res.stdout|int

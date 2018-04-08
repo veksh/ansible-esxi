@@ -1,0 +1,47 @@
+---
+#esxi_serial: "XXXXX-XXXXX-XXXX-XXXXX-XXXXX"
+
+# host names are in fact ignored by esxi; better use ip here
+esxi_local_users:
+  "alex":
+    desc: "Alexey Vekshin"
+    pubkeys:
+      - name:  "alex-mp"
+        hosts: "10.1.11.6,alex-mp.m1.maxidom.ru"
+
+# same default port groups for all for now
+# for multiple vSwitches: either add 2nd record field or keep separate var for
+#   2nd switch
+# actually, mX requires only adm-srv, srv-smb, vMotion (optional) and all-tagged:
+#   for now hosts with 3+ vlans have 2 cards (adm-srv + all-tagged) and vlans in
+#   sub-interfaces so per-vlan portgroups are for pure aesthetics
+esxi_portgroups:
+  # bare minimum
+  "vMotion":
+    tag: 241
+  "all-tagged":
+    tag: 4095
+  "adm-srv":
+    tag: 210
+  "srv-smb":
+    tag: 128
+  # rest of vlans: usually in all-tagged for shops
+  "casses":
+    tag: 64
+  "srv-mail":
+    tag: 129
+  "srv-netinf":
+    tag: 131
+  "pvt-cassadm":
+    tag: 192
+  "pvt-netinf":
+    tag: 199
+  "pvt-auth":
+    tag: 201
+  "pvt-log":
+    tag: 202
+
+# install host client
+vib_list:
+  - name: esx-ui
+    url: "http://www-distr.m1.maxidom.ru/suse_distr/iso/esxui-signed-6360286.vib"

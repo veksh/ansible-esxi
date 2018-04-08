@@ -1,0 +1,6 @@
+---
+- hosts: all.esxi
+  roles:
+    - hostconf-esxi
+  tags:
+    - hostconf

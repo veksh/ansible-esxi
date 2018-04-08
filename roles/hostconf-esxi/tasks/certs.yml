@@ -1,0 +1,25 @@
+# put pub key <fqdn>.pem into <hostname>.rui.crt
+# put priv key <fqdn>.priv.pem into <hostname>.rui.key.vault
+# encrypt it with "ansible-vault encrypt <hostname>.rui.key.vault"
+
+# to regenerate self-signed: "/sbin/generate-certificates"
+
+- name: (certs) check if server certificate is present
+  stat:
+    path: "{{ inventory_dir }}/files/{{ inventory_hostname }}.rui.crt"
+  register: cert_check_res
+
+- name: (certs) copy server certificats
+  copy:
+    src:  "{{ inventory_dir }}/files/{{ inventory_hostname }}.{{ item }}"
+    dest: "/etc/vmware/ssl/{{ item | replace('.vault', '') }}"
+    owner: root
+    group: root
+    mode:  0644
+  with_items:
+    - "rui.crt"
+    - "rui.key.vault"
+  when:
+    - cert_check_res.stat.exists
+  notify:
+    - restart rhttpproxy

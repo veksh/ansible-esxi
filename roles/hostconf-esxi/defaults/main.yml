@@ -1,0 +1,28 @@
+---
+# very dummy defaults
+#ntp_servers:
+#  - 127.0.0.1
+
+#dns_servers:
+#  - 127.0.0.1
+
+ssh_timeout: 3600
+
+# mostly ok: dns_domain is overriden per-group
+syslog_host: "log.{{ dns_domain }}"
+
+# filesystem names: 1st is "hostname-sys" by default
+local_datastores:
+  "vmhba0:C0:T0:L1": "{{ inventory_hostname }}-sys"
+
+# rename (empty) datastores
+rename_datastores: true
+
+# create datastores on vacant luns
+create_datastores: true
+
+# add those hosts to permitted host lists for forwarded keys
+permit_ssh_from: 10.*.209.*,10.0.40.*
+
+# disable autostart for VMs not in autostart list
+autostart_only_listed: false

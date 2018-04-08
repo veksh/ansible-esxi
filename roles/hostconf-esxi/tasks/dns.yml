@@ -1,0 +1,9 @@
+---
+# required vars: dns_servers
+- name: (dns) create resolver config file
+  template: 
+    src:   "resolv.conf.j2"
+    dest:  "/etc/resolv.conf"
+    owner: root
+    group: root
+    mode:  0644

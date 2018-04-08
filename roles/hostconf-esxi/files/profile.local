@@ -1,0 +1,11 @@
+PS1='\u@\h:\W\$ '
+if [ $TERM = xterm -o $TERM = xterm-color ]; then
+  # original
+    PS1='\[\033[36m\]\u\[\033[1;36m\]@\h\[\033[0;32m\]:\W\[\033[0m\]\$ \[\033]2;\u@\h:\w\007\]'
+    fi
+if [ $TERM = xterm-256color ]; then
+  # softer colors
+  PS1='\[\033[36m\]\u\[\033[1;36m\]@\[\033[0;36m\]\h\[\033[0;32m\]:\W\[\033[0m\]\$ \[\033]2;\u@\h:\w\007\]'
+  # set term to xterm for esxtop to work
+  export TERM=xterm
+fi

@@ -1,0 +1,10 @@
+- name: (hostname) get host name
+  shell: "esxcli system hostname get | awk '/Fully Qualified / {print $5}'"
+  register: hostname_res
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: (hostname) assign host name
+  command: "esxcli system hostname set --fqdn {{ esxi_fqdn }}"
+  when: hostname_res.stdout != esxi_fqdn

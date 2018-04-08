@@ -1,0 +1,14 @@
+- name: reload syslog config
+  command: "esxcli system syslog reload"
+
+- name: restart vpxa
+  command: "/etc/init.d/vpxa restart"
+
+- name: restart rhttpproxy
+  command: "/etc/init.d/rhttpproxy restart"
+
+- name: restart hostd
+  command: "/etc/init.d/hostd restart"
+
+- name: restart ntpd
+  command: "/etc/init.d/ntpd restart"

@@ -1,0 +1,12 @@
+#!/bin/sh
+
+{% for user, userinfo in (esxi_local_users | dictsort) if userinfo['pubkeys'] is defined %}
+[ -d /etc/ssh/keys-{{ user }} ] || mkdir /etc/ssh/keys-{{ user }}
+cat > /etc/ssh/keys-{{ user }}/authorized_keys << EOT
+{% for key_info in userinfo['pubkeys'] %}
+{% if key_info['hosts'] is defined %}from="{{ key_info['hosts'] }},{{ permit_ssh_from }}" {% endif %}
+{{ lookup('file', 'id_rsa.' + user + '@' + key_info['name'] + '.pub') }}
+{% endfor %}
+EOT
+
+{% endfor %}

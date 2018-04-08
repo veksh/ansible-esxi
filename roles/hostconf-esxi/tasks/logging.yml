@@ -1,0 +1,44 @@
+- name: (logging) get loghost settings
+  shell: "esxcli system syslog config get | awk '/^   Remote Host:/ {print $3}'"
+  register: loghost_res
+  changed_when: false
+  check_mode: false
+
+- name: (logging) set loghost name
+  command: "esxcli system syslog config set --loghost udp://{{ syslog_host }}"
+  when: loghost_res.stdout != ("udp://" + syslog_host)
+  notify: reload syslog config
+
+- name: (logging) check syslog client ruleset state
+  command: "esxcli network firewall ruleset list --ruleset-id=syslog"
+  register: syslog_ruleset_state
+  changed_when: false
+  check_mode: false
+
+- name: (logging) enable syslog client through firewall
+  command: "esxcli network firewall ruleset set --ruleset-id=syslog --enabled=true"
+  when: syslog_ruleset_state.stdout.find("false") != -1
+
+- name: (logging) set vpxa logging level to info
+  lineinfile:
+    dest: "/etc/vmware/vpxa/vpxa.cfg"
+    insertafter: "^  <log>"
+    regexp:  "^    <level>.*</level>$"
+    line:     "    <level>info</level>"
+  notify: restart vpxa
+
+- name: (logging) set rhttpproxy logging level to info
+  lineinfile:
+    dest: "/etc/vmware/rhttpproxy/config.xml"
+    insertafter: "^      <!-- default log level -->"
+    regexp:  "^      <level>.*</level>$"
+    line:     "      <level>info</level>"
+  notify: restart rhttpproxy
+
+- name: (logging) set hostd logging level to info
+  lineinfile:
+    dest: "/etc/vmware/hostd/config.xml"
+    insertafter: "^      <!-- default log level -->"
+    regexp:  "^      <level>.*</level>$"
+    line:     "      <level>info</level>"
+  notify: restart hostd

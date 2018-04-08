@@ -1,0 +1,10 @@
+### {{ ansible_managed }}
+{% for server in ntp_servers %}
+server {{ server }}
+{% endfor %}
+driftfile /etc/ntp.drift
+{% for server in ntp_servers %}
+restrict {{ server }} noquery nomodify notrap
+{% endfor %}
+restrict default ignore
+restrict 127.0.0.1 nopeer

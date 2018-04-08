@@ -1,0 +1,290 @@
+---
+# playbook to clone VM from one esxi host to another: will
+# - download VM files from src, upload to dst
+# - rename and clean up config parameters
+# - convert disk to thin
+# - prepare OVF parameters
+# - resgister VM on destination host
+
+# export ANSIBLE_CONFIG=/Users/alex/works/sysadm/ansible-study/esxi-mgmt/vm_deploy/ansible-deploy.esxi.cfg
+# ansible-playbook upload_clone.yaml -l nest-test -e 'dst_vm_name=phoenix11-test' -e 'dst_vm_ip=10.1.10.123'
+#   or
+# ansible-playbook upload_clone.yaml -l nest-test -e @clone_vars.yaml
+#   or with shorter names
+# ansible-playbook upload_clone.yaml -l nest1-m1 -e 'vm_name=dc1-m1-vm vm_desc="samba AD DC"' -e 'direct_scp=true push_scp=true'
+
+# deploying to Kazan: 1st phoenix, 40 minutes
+#   ansible-playbook upload_clone.yaml -l nest1-k1 -e 'dst_vm_name=phoenix11-1-k1'
+# deploying to Kazan: clone from 1st to 2nd host, 4 minutes
+#   ansible-playbook upload_clone.yaml -l nest2-k1 \
+#        -e 'src_vm_name=phoenix11-1-k1 src_vm_vol=nest1-sys src_vm_server=nest1-k1' \
+#        -e 'dst_vm_name=phoenix11-2-k1' \
+#        -e 'direct_scp=true'
+
+# parameters have sensible defaults; w/o args deployment would be
+# - from phoenix11 on cage7 (hard-coded, set in host_vars if different)
+# - to phoenix11 on <dest>:/vmfs/volume/<dest>-sys/
+# - OVF hostname equals to VM name, IP config auto-guessed from DNS lookup
+#   (assuming that host is already present in local DNS)
+# - set defaults in host_vars for src and dst vm params if fixed
+# - also all params are overrideable with cmdline vars, mb en masse like in
+#   example "clone_vars.yaml":
+#
+#     # source
+#     src_vm_server: cage7
+#     src_vm_name:   phoenix11
+#     src_vm_vol:    infra.data
+#     # destination
+#     dst_vm_name: phoenix11-t
+#     dst_vm_vol:  nest-test-sys
+#     dst_vm_ip:   10.1.10.123
+#     dst_vm_gw:   10.1.10.1
+#     gst_vm_net:  adm-srv
+#
+# environment and operational notes
+# - full 10G phoenix deployment take about 10-15 minutes inside M1
+# - most files are copied to local host first and then transferred to dst
+#     - remote host must have sufficient space in "remote_tmp" dir
+#     - vmware default is /.ansible/tmp, about 50M
+#     - ok for ansible.cfg: remote_tmp = $(df | awk 'NR==2 {print $6}')/tmp
+# - use -e 'direct_scp=true' to directly scp VMDK between src and dst hosts
+#     - does not support check_mode etc
+#     - requires agent forwarding between hosts
+#     - much faster for remote deployments
+#     - use -e 'direct_scp=true push_scp=true' to reverse direction of copy, i.e
+#       to scp from source host to destination (sometimes firewalls beteen hosts are
+#       less restrictive in that direction)
+# - ansible 2.2 "replace" is not compatible with python 3, use 2.3
+# - required local modules are "netaddr" and "dnspython"
+
+- hosts: all
+
+  vars:
+    src_vm:
+      server: "{{ src_vm_server | default('cage7') }}"
+      host:   "{{ hostvars[src_vm_server | default('cage7')].ansible_host }}"
+      name:   "{{ src_vm_name   | default('phoenix11') }}"
+      # really redundant: could get it from vm
+      path:   "{{ '/vmfs/volumes/' + (src_vm_vol | default('infra.data')) }}"
+    dst_vm:
+      host:   "{{ hostvars[inventory_hostname].ansible_host }}"
+      # pass as '-e dst_vm_vol=ds_name'; default: 1st defined local datastore or hostname + "-sys"
+      path:   "{{ '/vmfs/volumes/' + (vm_vol | default(dst_vm_vol) | default(((local_datastores|d({'def': ansible_hostname + '-sys'})) | dictsort | first)[1])) }}"
+      name:   "{{ vm_name | default(dst_vm_name) | default(src_vm.name) }}"
+      desc:   "{{ vm_desc | default(dst_vm_desc) | default('clone of ' + src_vm.name) }}"
+      net:    "{{ vm_net  | default(dst_vm_net)  | default('adm-srv') }}"
+    dst_ip_addr: "{{ dst_vm_ip | default(lookup('dig', dst_vm.name + '.' + ansible_dns.domain ))}}"
+    dst_gateway: "{{ dst_vm_gw | default(dst_ip_addr | regex_replace('^(\\d+\\.\\d+\\.\\d+)\\..*$', '\\1.254')) }}"
+    vm_conf:
+      hostname: "{{ dst_vm.name }}"
+      domain:   "{{ ansible_dns.domain }}"
+      ip:       "{{ dst_ip_addr }}"
+      gateway:  "{{ dst_gateway }}"
+      dns:      "{{ ansible_dns.nameservers|join(',') }}"
+      ntp:      "ntp.{{ ansible_dns.domain }}"
+      relay:    "smtp.{{ ansible_dns.domain }}"
+      syslog:   "log.{{ ansible_dns.domain }}"
+    # constants
+    conf_to_copy:
+      - vmx
+      - nvram
+      - vmsd
+      - vmxf
+      - vmdk
+    # better use native copy (but REMOTE_TEMP is required)
+    copy_with_scp: false
+    # debug
+    convert_to_thin: true
+    direct_scp: false
+    do_ovf_params: true
+    do_register: true
+    do_power_on: false
+    # allow agent forwarding w/o ansible.cfg change
+    ansible_ssh_extra_args: '-A'
+
+  tasks:
+
+    - name: check that play targets exactly one esxi host
+      assert:
+        that:
+          - ansible_play_hosts|length == 1
+          - ansible_os_family == "VMkernel"
+        msg: "please target only one vmware host with this play"
+      tags: test
+
+    - name: check that target VM name is correct
+      assert:
+        that:
+          - dst_ip_addr != 'NXDOMAIN'
+          - vm_conf.ip | ipaddr
+        msg: "please check that {{ dst_vm.name }}.{{ ansible_dns.domain }} is present in DNS"
+      tags: test
+
+    - name: check source dir
+      stat:
+        path: "{{ src_vm.path }}/{{ src_vm.name}}"
+      delegate_to: "{{ src_vm.server }}"
+      register: src_stat_res
+
+    # mb: make sure that source VM is powered off
+    - name: make sure source exist
+      assert:
+        that: src_stat_res.stat.isdir is defined and src_stat_res.stat.isdir
+
+    - name: check destination volume
+      stat:
+        path: "{{ dst_vm.path }}"
+      register: dst_stat_vol_res
+
+    - name: make sure destination volume exist
+      assert:
+        that: dst_stat_vol_res.stat.exists
+
+    - name: check destination dir
+      stat:
+        path: "{{ dst_vm.path }}/{{ dst_vm.name }}"
+      register: dst_stat_res
+
+    # mb: make sure that destination VM is not registered
+    - name: make sure destination does not exist
+      assert:
+        that: not dst_stat_res.stat.exists
+
+    - name: fetch configs from src to temp dir
+      fetch:
+        src: "{{ src_vm.path }}/{{ src_vm.name }}/{{ src_vm.name }}.{{ item }}"
+        dest: "{{ inventory_dir }}/tmp/{{ src_vm.server }}/{{ src_vm.name }}/{{ src_vm.name }}.{{ item }}"
+        flat: true
+      with_items: "{{ conf_to_copy }}"
+      delegate_to: "{{ src_vm.server }}"
+
+    - name: create destination dir
+      file:
+        path: "{{ dst_vm.path }}/{{ dst_vm.name }}"
+        state: directory
+
+    - name: upload configs to dest dir
+      copy:
+        src:  "{{ inventory_dir }}/tmp/{{ src_vm.server }}/{{ src_vm.name }}/{{ src_vm.name }}.{{ item }}"
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.{{ item }}"
+      with_items: "{{ conf_to_copy }}"
+
+    # does not work with ansible 2.2.3.0 on 6.5 (python 3.5.1): broken re
+    # error is "TypeError: cannot use a string pattern on a bytes-like object"
+    # fix at https://github.com/ansible/ansible/pull/19188/files (dec 11 2016)
+    # 2.3.0.0 is ok: use it or patch 2.2
+    - name: replace vm name in vmx config and vmdk
+      replace:
+        regexp:  '"{{ src_vm.name }}([^"]*)"'
+        replace: '"{{ dst_vm.name }}\1"'
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.{{ item }}"
+      with_items:
+        - vmx
+        - vmdk
+
+    - name: replace vm name in vmxf config
+      replace:
+        regexp:  '>{{ src_vm.name }}\.vmx<'
+        replace: '>{{ dst_vm.name }}.vmx<'
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmxf"
+
+    - name: clean vmx config from volatile params
+      lineinfile:
+        regexp: "^{{ item }} = "
+        state: absent
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx"
+      with_items:
+        - ethernet0.generatedAddress
+        - uuid.location
+        - uuid.bios
+        - vc.uuid
+        - sched.swap.derivedName
+
+    - name: customize vmx config params
+      lineinfile:
+        regexp: '^{{ item.key }} = .*$'
+        line:    '{{ item.key }} = "{{ item.value }}"'
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx"
+      with_dict:
+        "ethernet0.addressType": "generated"
+        "annotation": "{{ dst_vm.desc }}"
+        "ethernet0.networkName": "{{ dst_vm.net }}"
+
+    # better not back it up :)
+    - name: fetch vm disk from src to temp dir
+      fetch:
+        src: "{{ src_vm.path }}/{{ src_vm.name }}/{{ src_vm.name }}-flat.vmdk"
+        dest: "{{ inventory_dir }}/tmp/{{ src_vm.server }}/{{ src_vm.name }}/{{ src_vm.name }}-flat.vmdk"
+        flat: true
+      delegate_to: "{{ src_vm.server }}"
+      when: not direct_scp
+
+    # set remote_tmp to large dir on same FS (to rename)
+    # or export ANSIBLE_REMOTE_TEMP=/vmfs/volumes/nest-test-sys/tmp
+    # or set in ansible.cfg remote_tmp = $(df | awk 'NR==2 {print $6}')/tmp
+    # or copy manaully with scp (see below)
+    # 10G: 1:31 if already ok (just checksumming), 7:12 if not
+    - name: upload vm disk to dest dir
+      copy:
+        src:  "{{ inventory_dir }}/tmp/{{ src_vm.server }}/{{ src_vm.name }}/{{ src_vm.name }}-flat.vmdk"
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}-flat.vmdk"
+      when: not direct_scp
+
+    # copy manually; does not support check_mode and stuff, but does not require TMP :)
+    # relies on ssh agent forwarding
+    # set it up in ansible.cfg or set "ansible_ssh_extra_args: '-A'" in vars
+    - name: directly scp vm disk, pull dst <- src (if not using upload above)
+      shell: >
+        scp -o StrictHostKeyChecking=no \
+          {{ansible_user_id}}@{{src_vm.host}}:{{ src_vm.path }}/{{ src_vm.name }}/{{ src_vm.name }}-flat.vmdk \
+                                              {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}-flat.vmdk
+      when: direct_scp and not push_scp
+
+    # same but in reverse direction; sometimes firewall is more permissive that way
+    - name: directly scp vm disk, push src -> dst (if not using upload above)
+      shell: >
+        scp -o StrictHostKeyChecking=no       {{ src_vm.path }}/{{ src_vm.name }}/{{ src_vm.name }}-flat.vmdk \
+          {{ansible_user_id}}@{{dst_vm.host}}:{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}-flat.vmdk
+      delegate_to: "{{ src_vm.server }}"
+      when: direct_scp and push_scp
+
+    # convert to thin if option is set: copy, rename to orig
+    # copy thick-thick: 1:44 (10G)
+    #  : vmkfstools -i phoenix11-u1.vmdk -d thin thin-phoenix11.vmdk
+    #  : rm phoenix11-u1.vmdk phoenix11-u1-flat.vmdk
+    #  : vmkfstools -E thin-phoenix11.vmdk phoenix11-u1.vmdk
+    # no ": <" for multiline is ok (and even required for different indentation)
+    # 0:57 for 10G conversion
+    - name: copy VM disk to thin
+      shell:
+        vmkfstools -i {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmdk
+              -d thin {{ dst_vm.path }}/{{ dst_vm.name }}/thin-{{ dst_vm.name }}.vmdk
+      when: convert_to_thin
+
+    - name: clean up original VM disk files
+      shell:
+        vmkfstools -U {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmdk
+      when: convert_to_thin
+
+    - name: copy thin VM disks back
+      shell:
+        vmkfstools -E {{ dst_vm.path }}/{{ dst_vm.name }}/thin-{{ dst_vm.name }}.vmdk
+                      {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmdk
+      when: convert_to_thin
+
+    - name: add OVF params to VM config
+      lineinfile:
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx"
+        line: 'guestinfo.ovfEnv = "<Property oe:key=|22hostname|22 oe:value=|22{{ vm_conf.hostname }}|22/>|0A<Property oe:key=|22domain|22 oe:value=|22{{ vm_conf.domain }}|22/>|0A<Property oe:key=|22ip|22 oe:value=|22{{ vm_conf.ip }}|22/>|0A<Property oe:key=|22gateway|22 oe:value=|22{{ vm_conf.gateway }}|22/>|0A<Property oe:key=|22dns|22 oe:value=|22{{ vm_conf.dns }}|22/>|0A<Property oe:key=|22ntp|22 oe:value=|22{{ vm_conf.ntp }}|22/>|0A<Property oe:key=|22relay|22 oe:value=|22{{ vm_conf.relay }}|22/>|0A<Property oe:key=|22syslog|22 oe:value=|22{{ vm_conf.syslog }}|22/>|0A"'
+        regexp: '^guestinfo.ovfEnv '
+      when: do_ovf_params
+
+    # unregister: vim-cmd vmsvc/unregister <id>
+    - name: register VM
+      shell: "vim-cmd solo/registervm {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx {{ dst_vm.name }}"
+      register: vm_register_res
+      when: do_register
+
+    - name: power on newly registered VM
+      shell: "vim-cmd vmsvc/power.on {{ vm_register_res.stdout }}"
+      when: do_power_on

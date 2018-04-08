@@ -1,0 +1,117 @@
+# rename "datastore1" -> "(hostname)-sys"
+
+- name: (storage) get filesystems list
+  # also: "esxcli storage vmfs extent list"
+  shell: "esxcfg-scsidevs --vmfs | awk '{print $1, $5}' | sed -e 's/:/ /'"
+  register: fs_list_res
+  changed_when: false
+  check_mode: false
+
+- name: (storage) get device paths list
+  # several paths could map to one device
+  shell: "esxcfg-mpath -L | awk '{print $1, $3, $4, $5, $6, $7}'"
+  register: dev_list_res
+  changed_when: false
+  check_mode: false
+
+- name: (storage) get filesystems usage
+  # a bit complex :)
+  shell: "for f in $(find /vmfs/volumes/* -prune -type l | awk -F/ '{print $4}'); do echo -n $f '' && ls /vmfs/volumes/$f/ | wc -l; done"
+  register: fs_usage_res
+  changed_when: false
+  check_mode: false
+
+- name: (storage) convert lists to structures
+  set_fact:
+    # steps:
+    # - split to to array of tuples like ['adm-srv', 'vSwitch0', '210']
+    # - convert to records like {'name': 'adm-srv', 'switch': 'vSwitch0', 'tag': '210'}
+    # - convert list of those records to dict keyed by name
+    #   - alt: replace "to_dict()" by "list" to get a list of records)
+    # - result is structured like 'esxi_portgroups' from group_vars (keyed by name)
+    fsinfo_by_dev: "{{ fs_list_res.stdout_lines
+                   | map('split', ' ', 2)
+                   | map('record', ['dev', 'part', 'name'])
+                   | to_dict('dev')
+                   }}"
+    devinfo_by_path: "{{ dev_list_res.stdout_lines
+                   | map('split', ' ', 6)
+                   | map('record', ['path', 'dev', 'hba', 'ctr', 'tgt', 'lun'])
+                   | to_dict('path')
+                   }}"
+    usage_by_fs: "{{ fs_usage_res.stdout_lines
+                   | map('split', ' ', 1)
+                   | map('record', ['name', 'usage'])
+                   | to_dict('name')
+                   }}"
+
+#- name: print fs
+#  debug:
+#    var: fsinfo_by_dev
+#- name: print dev
+#  debug:
+#    var: devinfo_by_path
+#- name: print usage
+#  debug:
+#    var: usage_by_fs
+
+# delete extra files manually if required
+- name: (storage) check that all wrongly named datastores are empty
+  assert:
+    that:
+      - usage_by_fs[fsinfo_by_dev[devinfo_by_path[item.key].dev].name].usage == "0"
+    msg: "cannot rename datastore {{ item.key }} from {{ fsinfo_by_dev[devinfo_by_path[item.key].dev].name }} to {{ item.value }}: not empty"
+  with_dict: "{{ local_datastores }}"
+  when:
+    - rename_datastores == true
+    - devinfo_by_path[item.key].dev in fsinfo_by_dev
+    - fsinfo_by_dev[devinfo_by_path[item.key].dev].name != item.value
+
+- name: (storage) rename datastores
+  shell: "vim-cmd hostsvc/datastore/rename {{ fsinfo_by_dev[devinfo_by_path[item.key]['dev']]['name'] }} {{ item.value }}"
+  with_dict: "{{ local_datastores }}"
+  when:
+    - rename_datastores == true
+    - devinfo_by_path[item.key].dev in fsinfo_by_dev
+    - fsinfo_by_dev[devinfo_by_path[item.key].dev].name != item.value
+    - usage_by_fs[fsinfo_by_dev[devinfo_by_path[item.key].dev].name].usage == "0"
+
+- name: (storage) show missed datastores on vacant LUNs
+  debug:
+    msg: "will partition and newfs {{ item.key }} ({{ devinfo_by_path[item.key].dev }})"
+  with_dict: "{{ local_datastores }}"
+  when:
+    - create_datastores == true
+    - devinfo_by_path[item.key].dev not in fsinfo_by_dev
+
+# better check that size is correct :)
+# on errors like "unknown partition table": "partedUtil mklabel /dev/disks/naa.NNN gpt"
+# on errors like "not all space is used": try "partedUtil fix /dev/disks/naa.NNN"
+- name: (storage) make sure partition tables on vacant LUNs are empty
+  shell: "[[ $(partedUtil getptbl /dev/disks/{{ devinfo_by_path[item.key].dev }} | wc -l) == 2 ]]"
+  with_dict: "{{ local_datastores }}"
+  when:
+    - create_datastores == true
+    - devinfo_by_path[item.key].dev not in fsinfo_by_dev
+  check_mode: false
+  changed_when: false
+
+# check with "partedUtil getUsableSectors /dev/disks/naa.NNN"
+- name: (storage) partition vacant LUNs
+  shell: >
+    dev=/dev/disks/{{ devinfo_by_path[item.key].dev }};
+    last=$(partedUtil getUsableSectors $dev | awk '{print $2}');
+    partedUtil setptbl $dev gpt "1 128 $last {{ vmfs_guid }} 0"
+  with_dict: "{{ local_datastores }}"
+  when:
+    - create_datastores == true
+    - devinfo_by_path[item.key].dev not in fsinfo_by_dev
+
+- name: (storage) create VMFS on vacant LUNs
+  shell: "vmkfstools -C vmfs5 -b 1m -S {{ item.value }} /dev/disks/{{ devinfo_by_path[item.key].dev }}:1"
+  with_dict: "{{ local_datastores }}"
+  when:
+    - create_datastores == true
+    - devinfo_by_path[item.key].dev not in fsinfo_by_dev
+
+# todo: make LUNs with smartarray: too lazy to parse ssacli output now

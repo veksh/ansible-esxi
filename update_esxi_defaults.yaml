@@ -1,0 +1,4 @@
+default_http_src: "http://www-distr.m1.maxidom.ru/suse_distr/iso/"
+default_temp_dir: "{{ ((local_datastores|d({'def': ansible_hostname + '-sys'})) | dictsort | first)[1] }}"
+
+force_reboot: false

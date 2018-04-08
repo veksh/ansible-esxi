@@ -1,0 +1,39 @@
+# local datastores to create
+local_datastores:
+  "vmhba0:C0:T0:L1": "nest-test-sys"
+  "vmhba0:C0:T0:L2": "nest-test-apps"
+create_datastores: true
+
+# minimal for nest-test
+esxi_portgroups:
+  all-tagged: { tag: 4095 }
+  adm-srv:    { tag:  210 }
+  # do not really need it now
+  vMotion:    { tag:  241 }
+  # services here
+  srv-smb:    { tag:  128 }
+  srv-netinf: { tag:  131 }
+  pvt-netinf: { tag:  199 }
+
+# users: as usual + andrey
+esxi_local_users:
+  "alex":
+    desc: "Alexey Vekshin"
+    pubkeys:
+      - name:  "alex-mp"
+        hosts: "10.1.11.6,alex-mp"
+      - name:  "alex-mbp"
+        hosts: "alex-mbp15*,alex-mp.m1.maxidom.ru"
+
+# newer host client
+vib_list:
+  - name: esx-ui
+    url: "http://www-distr.m1.maxidom.ru/suse_distr/iso/esxui-signed-7119706.vib"
+
+# default clone source
+src_vm_name: phoenix11-test
+#src_vm_server: cage7
+#src_vm_vol:    infra.data
+#dst_vm_vol:    nest1-m1-storage1
+#dst_vm_net:    adm-srv
+

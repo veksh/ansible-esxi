@@ -1,0 +1,101 @@
+- name: (users) get users list
+  # skip header (first 2 lines), print rest (all fields)
+  shell: "esxcli system account list | awk 'NR > 2 && !/^(root|dcui|vpxuser) / {print}'"
+  register: users_list_res
+  changed_when: false
+  check_mode: false
+
+- name: (users) convert to structure
+  set_fact:
+    # trim ending spaces, convert to array of tuples like ['alex', 'his description'], make recods
+    #  from them like {'name': 'alex', 'descr': 'his description'}, convert list of those records
+    #  to dict keyed by name (alt: replace "to_dict()" by "list" to get a list of records)
+    # reslut is structured like 'esxi_local_users' from group_vars (keyed by name)
+    users: "{{ users_list_res.stdout_lines
+               | map('trim')
+               | map('split', None, 1)
+               | map('record', ['name', 'desc'])
+               | to_dict('name') }}"
+
+# Security.PasswordQualityControl cannot be set with esxcli; default is crazy in 6.5
+# or keep just one line in /etc/pam.d/passwd (remove "use_authtok")
+# password   sufficient   /lib/security/$ISA/pam_unix.so nullok shadow sha512
+- name: (users) allow any 8-char passwords
+  lineinfile:
+    dest: '/etc/pam.d/passwd'
+    regexp: "^password +requisite.*pam_passwdqc"
+    line:    "password   requisite    /lib/security/$ISA/pam_passwdqc.so retry=3 min=8,8,8,8,8"
+
+- name: (users) add missed users
+  command: >
+     esxcli system account add --id={{ item.key }} --description='{{ item.value.desc }}'
+     -p={{ lookup('password', 'creds/' + inventory_hostname + '.' + item.key + '.pass.out length=10 chars=ascii_letters,digits') }}
+     -c={{ lookup('password', 'creds/' + inventory_hostname + '.' + item.key + '.pass.out length=10 chars=ascii_letters,digits') }}
+  with_dict: "{{ esxi_local_users }}"
+  register: added_users
+  when: item.key not in users
+
+# actually wrong way to do it: need to set for all users, not only for changed
+# too lazy to fix now :)
+- name: (users) set privs for added users
+  # changes rights to full admin: DCUI login of shutdown (F12), console shell with alt-F1,
+  # ssh access too; not sure how to restrict that with standalone esxi
+  command: "esxcli system permission set -i={{ item.item.key }} -r=Admin"
+  with_items: "{{ added_users.results }}"
+  when: item.changed
+  # no_log: true
+
+- name: (users) print out temp passwords for added users
+  debug:
+    msg: "temp password for {{ item }}: {{ lookup('password', 'creds/' + inventory_hostname + '.' + item + '.pass.out')  }}"
+  with_items: "{{ added_users.results | selectattr('changed') | map(attribute='item') | map(attribute='key') | list }}"
+
+- name: (users) modify settings for changed users
+  command: "esxcli system account set --id={{ item.key }} --description='{{ esxi_local_users[item.key]['desc'] }}'"
+  with_dict: "{{ users }}"
+  when:
+    - esxi_local_users[item.key] is defined
+    - esxi_local_users[item.key]['desc'] != item.value.desc
+
+- name: (users) delete extra users
+  command: "esxcli system account remove --id={{ item.key }}"
+  with_dict: "{{ users }}"
+  when: item.key not in esxi_local_users
+
+- name: (users) generate ssh key restoration script
+  template:
+    src:  "gen_keys.sh.j2"
+    dest: "/etc/rc.local.d/local.sh"
+    mode: "u=rwx,og=r"
+  register: genkeys_script_res
+
+- name: (users) run script to regenerate keys
+  shell: "/etc/rc.local.d/local.sh"
+  when: genkeys_script_res.changed
+
+- name: (users) copy profile
+  copy:
+    src:  "profile.local"
+    dest: "/etc/profile.local"
+    mode: "u=rwx,og=r"
+
+- name: (users) check ssh timeout
+  shell: "esxcli system settings advanced list -o /UserVars/ESXiShellInteractiveTimeOut | awk '/^   Int Value:/ {print $3}'"
+  register: ssh_timeout_res
+  changed_when: false
+  check_mode: false
+
+- name: (users) set ssh timeout
+  command: "esxcli system settings advanced set -o /UserVars/ESXiShellInteractiveTimeOut -i {{ ssh_timeout }}"
+  # explicitly converting to int
+  when: ssh_timeout != ssh_timeout_res.stdout|int
+
+- name: (users) check ssh client ruleset state
+  command: "esxcli network firewall ruleset list --ruleset-id=sshClient"
+  register: ssh_ruleset_state
+  changed_when: false
+  check_mode: false
+
+- name: (users) enable ssh client through firewall
+  command: "esxcli network firewall ruleset set --ruleset-id=sshClient --enabled=true"
+  when: ssh_ruleset_state.stdout.find("false") != -1

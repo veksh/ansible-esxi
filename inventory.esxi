@@ -1,0 +1,19 @@
+# specifying inventory
+# - export ANSIBLE_CONFIG=~/esxi-mgmt/ansible.esxi.cfg
+#   and ansible-playbook all.yaml -l nest1-u1 --diff
+# - export ANSIBLE_HOSTS=inventory.esxi
+# - use "-i inventory.esxi"
+#   like ansible-playbook all.yaml -i inventory.esxi --tags hostconf -l nest1-m8 --diff
+
+# works ok for 6.0+, 5.5 python version is too old
+
+# initial hostconf: run with "-u root -k"
+# like: ansible-playbook all.yaml -l nest1-u1 --diff -u root -k --tags hostconf
+
+# all hosts: include sites here
+[all.esxi:children]
+all-m0
+
+# one site with specific vars in group_vars
+[all-m0]
+cage     ansible_host=cage.m0.maxidom.ru

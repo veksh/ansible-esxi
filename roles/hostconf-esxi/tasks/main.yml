@@ -1,0 +1,12 @@
+- include: hostname.yml
+- include: license.yml
+  when: esxi_serial is defined
+- include: dns.yml
+- include: ntp.yml
+- include: users.yml
+- include: network.yml
+- include: storage.yml
+- include: autostart.yml
+- include: logging.yml
+- include: certs.yml
+- include: software.yml

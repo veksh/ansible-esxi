@@ -1,0 +1,290 @@
+---
+# playbook to clone VM from local template vm on same host
+# - clone VM disk and configs
+# - rename and clean up config parameters
+# - prepare OVF parameters
+# - optionally, add 2nd disk and network card
+# - register and optionally power on new VM
+
+# export ANSIBLE_CONFIG=/Users/alex/works/sysadm/ansible-study/esxi-mgmt/vm_deploy/ansible-deploy.esxi.cfg
+# ansible-playbook clone_local.yaml -l nest-test -e 'dst_vm_name=mynewvm-with-ok-dns'
+#  or
+# ansible-playbook clone_local.yaml -l nest-test -e @clone_vars.yaml -e 'dst_vm_desc="new copy"'
+#  or fine-tuned like
+# ansible-playbook clone_local.yaml -l nest-test -e 'src_vm_name=phoenix11-test'
+#   -e 'dst_vm_name=pdcnt-vm' -e 'dst_vm_desc="test samba3 pdc"' -e 'dst_vm_net2=servers-tst'
+#   -e 'do_power_on=true'
+# ansible-playbook clone_local.yaml -l nest-test -e 'src_vm_name=phoenix11-test' -e 'dst_vm_name=member1-ad3-vm'
+#   -e 'dst_vm_desc="test samba4 server (from playbook)"' -e 'dst_vm_net2=servers-tst' -e 'do_power_on=true'
+# ansible-playbook clone_local.yaml -l nest1-mf1 -e 'dst_vm_name=dc1-mf1-vm dst_vm_desc="samba AD domain controller" dst_vm_net2=srv-smb do_power_on=true'
+#   or with shorter names, assuming that src_vm_name is set in host config
+# ansible-playbook clone_local.yaml -l nest-test -e 'vm_name=clone-vm vm_desc="test server" vm_net2=servers-tst vm_disk2=10G,nest-test-apps vm_cpus=2 vm_mem=4096'
+# ansible-playbook clone_local.yaml -l nest1-mf1 -e 'vm_name=dc1-mf1-vm vm_desc="samba AD domain controller" vm_net2=srv-smb power_on=true'
+# ansible-playbook clone_local.yaml -l nest1-mf1 -e 'vm_name=files-mf1-vm vm_desc="samba file server" vm_net2=srv-smb vm_disk2=100G' -e 'do_power_on=true'
+
+
+# only required arg is dst_vm_name, defaults are:
+# - clone from "default_src_vm_name" (host_vars) on <hostname>-sys to same datastore, thin by default
+#   params: src_vm_name + src_vm_vol; dst_vm_vol
+# - network plugged to same portgroup (param: dst_vm_net), OVF hostname equals to VM name,
+#   IP config auto-guessed from DNS lookup (so new host must be in DNS already)
+#   params: dst_vm_net, dst_vm_ip
+# - vm will be registered and not powered on
+#   params: do_register, do_power_on
+# - it is also possible to add 2nd net card and 2nd disk to clone (default: none)
+#     - net: -e 'dst_vm_net2=servers-tst'
+#     - disk: -e 'dst_vm_disk2=1G,nest-test-apps' (or just 'dst_vm_disk2=10G' for same datastore)
+
+# all params are overrideable with cmdline vars; example "clone_vars.yaml":
+#
+#     # source
+#     src_vm_name:   phoenix11
+#     src_vm_vol:    infra.data
+#     # destination
+#     dst_vm_name: newvm
+#     dst_vm_desc: new test vm
+#     dst_vm_vol:  nest-test-apps
+#     dst_vm_ip:   10.1.10.123
+#     dst_vm_gw:   10.1.10.1
+#     dst_vm_net:  adm-srv
+#     # optional additional hardware
+#     dst_vm_net2:  "srv-smb"
+#     dst_vm_disk2: "10G,nest-test-apps"
+#     dst_vm_cpus:  2
+#     dst_vm_mem:   16384
+
+# environment and operational notes
+# - full 10G phoenix clone take about 2-3 minutes inside M1
+# - ansible 2.2 "replace" is not compatible with python 3
+#   - use 2.3 (it is ok)
+#   - for 2.2 fix ./lib/python2.7/site-packages/ansible/modules/core/files/replace.py
+#   - fixed module is included
+# - required local modules are "netaddr" and "dnspython"
+
+- hosts: all
+
+  vars:
+    # default for source and dest: 1st host volume if defined, else hostname + '-sys'
+    default_vol: "{{ src_vm_vol | default(((local_datastores|d({'def': ansible_hostname + '-sys'})) | dictsort | first)[1]) }}"
+    # better have it defined, or conditions would be extremely complex
+    dsk2: "{{ vm_disk2 | default(dst_vm_disk2) | default ('') }}"
+    src_vm:
+      name:   "{{ src_vm_name | default('phoenix11') }}"
+      # really redundant: could get it from vm
+      path:   "{{ '/vmfs/volumes/' + (src_vm_vol | default(default_vol)) }}"
+    dst_vm:
+      name:   "{{ vm_name | default(dst_vm_name) }}"
+      path:   "{{ '/vmfs/volumes/' + (vm_vol | default(dst_vm_vol) | default(default_vol)) }}"
+      desc:   "{{ vm_desc | default(dst_vm_desc) | default('clone of ' + src_vm.name) }}"
+      net:    "{{ vm_net  | default(dst_vm_net)  | default('') }}"
+      net2:   "{{ vm_net2 | default(dst_vm_net2) | default('') }}"
+      cpus:   "{{ vm_cpus | default(dst_vm_cpus) | default('') }}"
+      mem:    "{{ vm_mem  | default(dst_vm_mem)  | default('') }}"
+      # full format: "10G,nest-test-apps"; short: just "10G" (same datastore as VM)
+      disk2_size: "{{ dsk2 | regex_replace('^([0-9]+[KGM]).*$', '\\1') if dsk2 != '' else '' }}"
+      # default: same as VM if not in arg
+      disk2_path: "{{ '/vmfs/volumes/' +
+          ((',' in dsk2) | ternary (
+            dsk2 | regex_replace('^[0-9]+[KGM],?', ''),
+            vm_vol | default(dst_vm_vol) | default(default_vol))
+          ) if dsk2 != '' else '' }}"
+    dst_ip_addr: "{{ vm_ip | default(dst_vm_ip) | default(lookup('dig', dst_vm.name + '.' + ansible_dns.domain ))}}"
+    dst_gateway: "{{ vm_gw | default(dst_vm_gw) | default(dst_ip_addr | regex_replace('^(\\d+\\.\\d+\\.\\d+)\\..*$', '\\1.254')) }}"
+    vm_conf:
+      hostname: "{{ dst_vm.name }}"
+      domain:   "{{ ansible_dns.domain }}"
+      ip:       "{{ dst_ip_addr }}"
+      gateway:  "{{ dst_gateway }}"
+      dns:      "{{ ansible_dns.nameservers|join(',') }}"
+      ntp:      "ntp.{{ ansible_dns.domain }}"
+      relay:    "smtp.{{ ansible_dns.domain }}"
+      syslog:   "log.{{ ansible_dns.domain }}"
+    # constants
+    conf_to_copy:
+      - vmx
+      - nvram
+      - vmsd
+      - vmxf
+    pci_slot_addl_card: 224
+    # optional parts
+    convert_to_thin: true
+    do_ovf_params: true
+    do_register: true
+    do_power_on: false
+
+  tasks:
+
+    - debug: var=src_vm
+      tags: test
+    - debug: var=dst_vm
+      tags: test
+    - debug: var=vm_conf
+      tags: test
+
+    # - meta: end_play
+
+    - name: check that play targets exactly one esxi host
+      assert:
+        that:
+          - ansible_play_hosts|length == 1
+          - ansible_os_family == "VMkernel"
+        msg: "please target only one vmware host with this play"
+
+    - name: check that target VM name is correct
+      assert:
+        that:
+          - dst_vm.name is defined
+          - dst_ip_addr != 'NXDOMAIN'
+          - vm_conf.ip | ipaddr
+        msg: "please check that {{ dst_vm.name }}.{{ ansible_dns.domain }} is present in DNS"
+
+    - name: check rest of params for consistency
+      assert:
+        that:
+          - dst_vm.disk2_path == '' or dst_vm.disk2_size != ''
+
+    # mb: make sure that source VM is powered off
+    - name: make sure source dir exist
+      stat:
+        path: "{{ src_vm.path }}/{{ src_vm.name}}"
+      register: src_stat_res
+      failed_when: not (src_stat_res.stat.isdir is defined and src_stat_res.stat.isdir)
+
+    - name: make sure destination volume exists
+      stat:
+        path: "{{ dst_vm.path }}"
+      register: dst_stat_vol_res
+      failed_when: not dst_stat_vol_res.stat.exists
+
+    - name: check that VM folder on destination dir does not exist yet
+      stat:
+        path: "{{ dst_vm.path }}/{{ dst_vm.name }}"
+      register: dst_stat_res
+      failed_when: dst_stat_res.stat.exists
+
+    - name: check that destination volume for 2nd disk exists
+      stat:
+        path: "{{ dst_vm.disk2_path }}"
+      register: dst_stat_vol2_res
+      failed_when: not dst_stat_vol2_res.stat.exists
+      when: dst_vm.disk2_path != ''
+
+    - name: create destination dir
+      file:
+        path: "{{ dst_vm.path }}/{{ dst_vm.name }}"
+        state: directory
+
+    - name: copy configs to dest dir
+      copy:
+        src:  "{{ src_vm.path }}/{{ src_vm.name }}/{{ src_vm.name }}.{{ item }}"
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.{{ item }}"
+        remote_src: true
+      with_items: "{{ conf_to_copy }}"
+
+    # does not work with ansible 2.2.3.0 on 6.5 (python 3.5.1): broken re
+    # error is "TypeError: cannot use a string pattern on a bytes-like object"
+    # fix at https://github.com/ansible/ansible/pull/19188/files (dec 11 2016)
+    # 2.3.0.0 is ok: use it or patch 2.2
+    - name: replace vm name in vmx config
+      replace:
+        regexp:  '"{{ src_vm.name }}([^"]*)"'
+        replace: '"{{ dst_vm.name }}\1"'
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.{{ item }}"
+      with_items:
+        - vmx
+
+    - name: replace vm name in vmxf config
+      replace:
+        regexp:  '>{{ src_vm.name }}\.vmx<'
+        replace: '>{{ dst_vm.name }}.vmx<'
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmxf"
+
+    - name: clean vmx config from volatile params
+      lineinfile:
+        regexp: "^{{ item }} = "
+        state: absent
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx"
+      with_items:
+        - ethernet0.generatedAddress
+        - uuid.location
+        - uuid.bios
+        - vc.uuid
+        - sched.swap.derivedName
+
+    # empty means "unchanged"
+    - name: customize vmx config params
+      lineinfile:
+        regexp: '^{{ item.key }} = .*$'
+        line:    '{{ item.key }} = "{{ item.value }}"'
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx"
+      when: item.value is defined and item.value != ''
+      with_dict:
+        "ethernet0.addressType": "generated"
+        "annotation": "{{ dst_vm.desc }}"
+        "ethernet0.networkName": "{{ dst_vm.net }}"
+        "numvcpus": "{{ dst_vm.cpus }}"
+        "memSize": "{{ dst_vm.mem }}"
+
+    # 43s for local thin copy
+    - name: clone VM disk
+      shell:
+        vmkfstools -i {{ src_vm.path }}/{{ src_vm.name }}/{{ src_vm.name }}.vmdk
+              {{ convert_to_thin | ternary ("-d thin", "") }}
+              {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmdk
+
+    - name: add OVF params to VM config
+      lineinfile:
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx"
+        line: 'guestinfo.ovfEnv = "<Property oe:key=|22hostname|22 oe:value=|22{{ vm_conf.hostname }}|22/>|0A<Property oe:key=|22domain|22 oe:value=|22{{ vm_conf.domain }}|22/>|0A<Property oe:key=|22ip|22 oe:value=|22{{ vm_conf.ip }}|22/>|0A<Property oe:key=|22gateway|22 oe:value=|22{{ vm_conf.gateway }}|22/>|0A<Property oe:key=|22dns|22 oe:value=|22{{ vm_conf.dns }}|22/>|0A<Property oe:key=|22ntp|22 oe:value=|22{{ vm_conf.ntp }}|22/>|0A<Property oe:key=|22relay|22 oe:value=|22{{ vm_conf.relay }}|22/>|0A<Property oe:key=|22syslog|22 oe:value=|22{{ vm_conf.syslog }}|22/>|0A"'
+        regexp: '^guestinfo.ovfEnv '
+      when: do_ovf_params
+
+    # pci slot number: a bit tricky
+    # - for phoenix children 1st is usually 192, 2nd 224
+    # - for centos 1st is 160 (and 1st card is "ens160"), 2nd is 192
+    # so lets make 2nd card 224
+    - name: add 2nd network card
+      blockinfile:
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx"
+        block: |
+          ethernet1.present = "true"
+          ethernet1.pciSlotNumber = "{{ pci_slot_addl_card }}"
+          ethernet1.virtualDev = "vmxnet3"
+          ethernet1.networkName = "{{ dst_vm.net2 }}"
+          ethernet1.addressType = "generated"
+        marker: "# {mark} 2nd network card"
+      when: dst_vm.net2 is defined and dst_vm.net2 != ''
+
+    - name: create directory for 2nd disk
+      file:
+        path: "{{ dst_vm.disk2_path }}/{{ dst_vm.name }}"
+        state: directory
+      when: dst_vm.disk2_path != ''
+
+    - name: create 2nd disk
+      shell:
+        vmkfstools -c {{ dst_vm.disk2_size }}
+              {{ convert_to_thin | ternary ("-d thin", "") }}
+              {{ dst_vm.disk2_path }}/{{ dst_vm.name }}/{{ dst_vm.name }}-disk1.vmdk
+      when: dst_vm.disk2_path != ''
+
+    - name: add 2nd disk to config
+      blockinfile:
+        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx"
+        block: |
+          scsi0:1.deviceType = "scsi-hardDisk"
+          scsi0:1.fileName = "{{ dst_vm.disk2_path }}/{{ dst_vm.name }}/{{ dst_vm.name }}-disk1.vmdk"
+          scsi0:1.present = "TRUE"
+          scsi0:1.redo = ""
+        marker: "# {mark} 2nd disk"
+      when: dst_vm.disk2_path != ''
+
+    # unregister: vim-cmd vmsvc/unregister <id>
+    - name: register VM
+      shell: "vim-cmd solo/registervm {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx {{dst_vm.name }}"
+      register: vm_register_res
+      when: do_register
+
+    - name: power on newly registered VM
+      shell: "vim-cmd vmsvc/power.on {{ vm_register_res.stdout }}"
+      when: do_power_on

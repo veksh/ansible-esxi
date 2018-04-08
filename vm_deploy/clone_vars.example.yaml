@@ -1,0 +1,16 @@
+---
+## variables for cloning: example
+
+## dest: optional
+# default: like src 
+dst_vm_name: phoenix11-t  
+# default: 1st datastore
+dst_vm_path: nest-test-sys
+# default: look up with dns (name + dst host domain)
+dst_vm_ip:   10.1.10.123
+dst_vm_gw:   10.1.10.254
+
+## source: usually m0 template
+#src_vm_server: cage7
+#src_vm_name:   phoenix11
+#src_vm_path:   infra.data

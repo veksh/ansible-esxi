@@ -1,0 +1,60 @@
+# mostly dealing with autostart now
+
+- name: (autostart) get autostart options list
+  shell: "{{ asm_cmd }}/get_defaults | awk 'NR > 1 && !/^}/ {print $1, $3}' | sed -e 's/,$//'"
+  register: autostart_opts_list_res
+  changed_when: false
+  check_mode: false
+
+- name: (autostart) convert autostart options to structure
+  set_fact:
+    # convert to flat dict "name" -> "value" (key is 1st record element, value is 2nd)
+    autostart_opts: "{{ autostart_opts_list_res.stdout_lines
+               | map('split', None, 1)
+               | to_dict_flat }}"
+
+#- name: print them
+#  debug:
+#    var: autostart_opts
+
+- name: (autostart) enable autostart
+  command: "{{ asm_cmd }}/enable_autostart true"
+  when: autostart_opts.enabled != "true"
+
+- name: (autostart) set autostart defaults
+  command: "{{ asm_cmd }}/update_defaults 120 120 'guestShutdown' true"
+  when: autostart_opts.stopAction != '"guestShutdown"'
+
+- name: (autostart) get list of VMs
+  esxi_vm_info:
+    get_start_state: true
+  register: vm_info
+
+# autostart list is not defined by default (to prevent stopping them all)
+- name: (autostart) enable autostart for VMs in autostart list
+  esxi_autostart:
+    name:  "{{ item.key}}"
+    enabled: true
+    order: "{{ item.value.order | default(omit) }}"
+  with_dict: "{{ vms_to_autostart }}"
+  when:
+    - vms_to_autostart is defined
+    - item.key in vm_info.id_by_vm
+    # optional, to simplify startup
+    - item.key not in vm_info.start_by_vm
+
+- name: (autostart) disable autostart for VMs not in autostart list
+  esxi_autostart:
+    name:  "{{ item.key }}"
+    enabled: false
+  with_dict: "{{ vm_info.start_by_vm }}"
+  when:
+    - autostart_only_listed
+    - item.key not in vms_to_autostart
+
+# todo: enable autostart for machines from list
+# - get list: `vim-cmd hostsvc/autostartmanager/get_autostartseq`
+#     - not sure how to parse it w/o custom module
+# - get list of vm name to id mappings with `vim-cmd vmsvc/getallvms`
+# - compare and fix autostart entries
+# - most probably will need a module like "service"
