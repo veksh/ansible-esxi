@@ -12,8 +12,8 @@ ssh_timeout: 3600
 syslog_host: "log.{{ dns_domain }}"
 
 # filesystem names: 1st is "hostname-sys" by default
-local_datastores:
-  "vmhba0:C0:T0:L1": "{{ inventory_hostname }}-sys"
+local_datastores: {}
+#  "vmhba0:C0:T0:L1": "{{ inventory_hostname }}-sys"
 
 # rename (empty) datastores
 rename_datastores: true
@@ -22,7 +22,7 @@ rename_datastores: true
 create_datastores: true
 
 # add those hosts to permitted host lists for forwarded keys
-permit_ssh_from: 10.*.209.*,10.0.40.*
+permit_ssh_from: 192.168.0.*
 
 # disable autostart for VMs not in autostart list
 autostart_only_listed: false
