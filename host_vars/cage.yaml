@@ -1,10 +1,10 @@
 # local datastores to create
 local_datastores:
-  "vmhba0:C0:T0:L1": "nest-test-sys"
-  "vmhba0:C0:T0:L2": "nest-test-apps"
+  "vmhba0:C0:T0:L1": "cage-sys"
+  "vmhba0:C0:T0:L2": "cage-apps"
 create_datastores: true
 
-# minimal for nest-test
+# minimal for cage
 esxi_portgroups:
   all-tagged: { tag: 4095 }
   adm-srv:    { tag:  210 }

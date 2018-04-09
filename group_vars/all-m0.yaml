@@ -14,10 +14,10 @@ vms_to_autostart:
     order: 1
   hawk-m0:
     order: 2
-  falcon-u1:
+  falcon-m0:
 
 # autostart only listed VMs
 autostart_only_listed: true
 
 # really ok with defaults: "log." + dns_domain
-# syslog_host: log.m6.maxidom.ru
+# syslog_host: log.m0.maxidom.ru

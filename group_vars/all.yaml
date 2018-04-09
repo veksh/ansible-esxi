@@ -23,23 +23,6 @@ esxi_portgroups:
     tag: 4095
   "adm-srv":
     tag: 210
-  "srv-smb":
-    tag: 128
-  # rest of vlans: usually in all-tagged for shops
-  "casses":
-    tag: 64
-  "srv-mail":
-    tag: 129
-  "srv-netinf":
-    tag: 131
-  "pvt-cassadm":
-    tag: 192
-  "pvt-netinf":
-    tag: 199
-  "pvt-auth":
-    tag: 201
-  "pvt-log":
-    tag: 202
 
 # install host client
 vib_list:
