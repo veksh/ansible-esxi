@@ -3,18 +3,16 @@ Ansible has some great modules for VMware vCenter (especially in 2.5), but none 
 managing standalone ESXi hosts. There are many cases when full vCenter infrastructure
 is not required (and web-based Host UI is quite enough for administrative tasks).
 
-Modules, roles and playbooks presented here are for management of standalone ESXi hosts
-(and VMs on those hosts) via SSH connection (usually with key-based authentication,
-which is native to Ansible and does not require storing shared vCenter passwords).
-Hosts under vCenter management are ok too.
+Modules, roles and playbooks presented here allow to manageme standalone ESXi hosts
+(although hosts under vCenter are ok too) with SSH connection, usually with
+transparent key-based authentication.
 
 # Contents of repository
 
 - role to configure ESXi host (`roles/hostconf_esxi`)
 - playbooks to deploy new VM on ESXi host (in `vm_deploy/`)
-    - by cloning local VM (`clone_local`)
-    - or by uploading template VM from some other host (`upload_clone`)
-- example playbook to update ESXi host with offline bundle (`update_esxi.yaml`)
+    - by uploading (template) VM from some other host (`upload_clone`)
+    - or by cloning local VM (`clone_local`)
 - modules used by role and deployment playbook
     - to gather VM facts from ESXi host (`esxi_vm_info`)
     - to manage autostart of VMs (`esxi_autostart`)
@@ -22,25 +20,29 @@ Hosts under vCenter management are ok too.
 - some helper filter plugins to simplify working with ESXi shell commands output
     - `split`: split string into a list
     - `todict`: convert a list of records into a dictionary, using specified field as a key
+- example playbook to update ESXi host with offline bundle (`update_esxi.yaml`)
 - helper script to get vault pass from macOs keychain (`get_vault_pass.esxi.sh`)
-
-Configuration and mode of application of components are described below in more
-detail.
 
 # `hostconf-esxi` role
 
-This role takes care of many aspects of standalone ESXi server configuration, namely
+This role takes care of many aspects of standalone ESXi server configuration like
 
 - ESXi license key (if set)
 - host name, DNS servers
 - NTP servers, enable NTP client, set time
-- users (create missed, remove extra ones), assign random passwords to new users (and
-  store them in `creds/`), make SSH keys persist across reboots, grant DCUI rights
-- portgroups (create missed, remove extra ones) on vSwitch0, assign specified tags to
-  them
+- users
+    - create missed, remove extra ones
+    - assign random passwords to new users (and store in `creds/`)
+    - make SSH keys persist across reboots
+    - grant DCUI rights
+- portgroups on vSwitch0
+    - create missed, remove extra
+    - assign specified tags
 - block BPDUs from guests
-- datastores (create missed, and rename empty ones with wrong names) on specified
-  devices (partition them if required)
+- datastores
+    - partition specified devices if required
+    - create missed datastores
+    - rename empty ones with wrong names
 - autostart for specified VMs (optionally disabling it for all others)
 - logging to syslog server; lower `vpxa` and other noisy components logging level from
   default `verbose` to `info`
