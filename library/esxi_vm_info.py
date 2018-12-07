@@ -114,8 +114,10 @@ def load_startup_list(module, vm_by_id):
             vm_order = int(val)
             if vm_enabled:
                 sinfo[vm_name] = vm_order
+            #sinfo[vm_name] = vm_order
         elif key == 'startAction':
-            if val.strip('"') == 'PowerOn':
+            # could be 'PowerOn' and 'powerOn'
+            if str.lower(val.strip('"')) == 'poweron':
                 vm_enabled = True
                 if vm_order > 0:
                     sinfo[vm_name] = vm_order

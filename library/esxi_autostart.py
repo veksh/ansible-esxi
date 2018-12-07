@@ -87,7 +87,7 @@ COMMANDS = {
                      '{vm_id} "PowerOn" "10" "{order}" ' +
                      '"guestShutdown" "systemDefault" "systemDefault"',
         # use '--' to mark end of options or else it will complain about -1
-        'disable_start': 'vim-cmd hostsvc/autostartmanager/update_autostartentry -- ' + 
+        'disable_start': 'vim-cmd hostsvc/autostartmanager/update_autostartentry -- ' +
                          '"{vm_id}" "PowerOff" "1" "-1" ' +
                          '"guestShutdown" "systemDefault" "systemDefault"'
     },
@@ -151,6 +151,8 @@ class VMStartMgr(object):
         ret, out, err = self.module.run_command(self.commands['get_autoruns'])
         if ret != 0:
             self.module.fail_json(msg="unable go get startup list", rc=ret, err=err)
+        if out == '(vim.host.AutoStartManager.AutoPowerInfo) []':
+            return sinfo
         for line in out.split('\n'):
             if line.lstrip().startswith(('(', '}', ']')) or line == '':
                 continue
