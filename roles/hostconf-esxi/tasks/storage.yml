@@ -96,7 +96,13 @@
   check_mode: false
   changed_when: false
 
-# check with "partedUtil getUsableSectors /dev/disks/naa.NNN"
+- name: (storage) create gpt labels on vacant LUNs
+  shell: "partedUtil mklabel /dev/disks/{{ devinfo_by_path[item.key].dev }} gpt"
+  with_dict: "{{ local_datastores }}"
+  when:
+    - create_datastores == true
+    - devinfo_by_path[item.key].dev not in fsinfo_by_dev
+
 - name: (storage) partition vacant LUNs
   shell: >
     dev=/dev/disks/{{ devinfo_by_path[item.key].dev }};
