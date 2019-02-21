@@ -104,7 +104,6 @@
       - vmx
       - nvram
       - vmsd
-      - vmxf
     pci_slot_addl_card: 224
     # optional parts
     convert_to_thin: true
@@ -192,12 +191,6 @@
         dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.{{ item }}"
       with_items:
         - vmx
-
-    - name: replace vm name in vmxf config
-      replace:
-        regexp:  '>{{ src_vm.name }}\.vmx<'
-        replace: '>{{ dst_vm.name }}.vmx<'
-        dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmxf"
 
     - name: clean vmx config from volatile params
       lineinfile:
