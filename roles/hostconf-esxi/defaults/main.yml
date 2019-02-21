@@ -26,3 +26,9 @@ permit_ssh_from: 192.168.0.*
 
 # disable autostart for VMs not in autostart list
 autostart_only_listed: false
+
+# vmotion iface: vmotion IP is <same-as-vmk0>.<same-as-vmk0>.<vmotion_subnet>.<same-as-vmk0>
+create_vmotion_iface: false
+vmotion_iface_name: vmk1
+vmotion_portgroup_name: vMotion
+vmotion_subnet_number: 241

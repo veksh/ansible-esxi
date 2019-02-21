@@ -25,19 +25,20 @@
   when: item.key not in portgroups
 
 - name: (network) check that deleted portgroups are free from clients
-  assert: { that: "(portgroups[item].clients|int == 0)" }
+  assert:
+    that: "(portgroups[item].clients|int == 0)"
   with_items: "{{ portgroups.keys() }}"
   when: item not in esxi_portgroups
 
-- name: (network) deleting extra portgroups
+- name: (network) delete extra portgroups
   command: "{{ pgmod }} remove -p '{{ item.key }}' -v vSwitch0"
   with_dict: "{{ portgroups }}"
   when: (item.key not in esxi_portgroups) and (item.value.clients|int == 0)
-  # never worked for me in 2.2 
-  #  loop_control:
-  #    label: "{{ item.key }}"
+  # loop_control does not work with "command"
+  # loop_control:
+  #   label: "{{ item.key }}"
 
-- name: (network) setting vlan tags to correct values
+- name: (network) set vlan tags to correct values
   command: "{{ pgmod }} set -p '{{ item.key }}' --vlan-id {{ item.value.tag }}"
   with_dict: "{{ esxi_portgroups }}"
   when: (item.key not in portgroups) or (item.value.tag != portgroups[item.key]['tag']|int)
@@ -51,3 +52,47 @@
 - name: (network) block BPDUs from guests
   command: "esxcli system settings advanced set -o /Net/BlockGuestBPDU -i 1"
   when: 1 != bpdu_block_res.stdout|int
+
+- block:
+    - name: (network) get ipv4 interfaces list
+      command: "esxcli network ip interface ipv4 get"
+      register: ipv4_ifaces_res
+      changed_when: false
+      check_mode: false
+
+    - name: (network) parse ip interface list
+      set_fact:
+        # have 2 junk entries from header (with keys "Name" and "----")
+        # safe to ignore (filter out with e.g. "rejectattr" if not)
+        ip_by_nic: "{{ ipv4_ifaces_res.stdout_lines
+                       | map('split', None, 2)
+                       | map('record', ['name', 'address', 'rest'])
+                       | to_dict('name') }}"
+
+    - name: (network) create interface for vMotion
+      command: "esxcli network ip interface add -i {{ vmotion_iface_name }} -p '{{ vmotion_portgroup_name }}'"
+      when:
+        - vmotion_iface_name not in ipv4_ifaces_res.stdout
+
+    - name: (network) calculate vmotion addr
+      set_fact:
+        # be careful not to include "." in RE: \1 became \1241 :)
+        vmotion_addr: "{{ ip_by_nic['vmk0'].address | regex_replace('^(\\d+\\.\\d+)\\.\\d+', '\\1.' + (vmotion_subnet_number|string)) }}"
+
+    - name: (network) set ip address on vMotion interface
+      command: "esxcli network ip interface ipv4 set -i {{ vmotion_iface_name }} -I {{ vmotion_addr }} -N 255.255.255.0 -t static"
+      when:
+        - ip_by_nic[vmotion_iface_name]['address'] != vmotion_addr
+
+    - name: (network) get tag on vMotion interface
+      command: "esxcli network ip interface tag get -i {{ vmotion_iface_name }}"
+      register: vmotion_tag_res
+      changed_when: false
+      check_mode: false
+
+    - name: (network) assign vMotion interface tag
+      command: "esxcli network ip interface tag add -i {{ vmotion_iface_name }} -t VMotion"
+      when:
+        - ('VMotion' not in vmotion_tag_res.stdout)
+
+  when: create_vmotion_iface

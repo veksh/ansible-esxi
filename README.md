@@ -39,6 +39,7 @@ This role takes care of many aspects of standalone ESXi server configuration lik
     - create missed, remove extra
     - assign specified tags
 - block BPDUs from guests
+- create vMotion interface (off by default, see `create_vmotion_iface` in role defaults)
 - datastores
     - partition specified devices if required
     - create missed datastores
