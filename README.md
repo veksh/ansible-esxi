@@ -35,7 +35,7 @@ This role takes care of many aspects of standalone ESXi server configuration lik
     - assign random passwords to new users (and store in `creds/`)
     - make SSH keys persist across reboots
     - grant DCUI rights
-- portgroups on vSwitch0
+- portgroups
     - create missed, remove extra
     - assign specified tags
 - block BPDUs from guests
@@ -106,6 +106,8 @@ newer versions of 5.5 have working python 2.7 too).
           adm-srv:    { tag:  210 }
           srv-netinf: { tag:  131 }
           pvt-netinf: { tag:  199 }
+          # could also specify vSwitch (default is vSwitch0)
+          adm-stor:   { tag:   21, vswitch: vSwitch1 }
 
 - datastore configuration: datastores would be created on those devices if missed and
   `create_datastores` is set; existent datastores would be renamed to match specified

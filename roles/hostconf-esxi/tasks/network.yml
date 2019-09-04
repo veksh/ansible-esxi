@@ -20,7 +20,7 @@
     pgmod: "esxcli network vswitch standard portgroup"
 
 - name: (network) add missed portgroups
-  command: "{{ pgmod }} add -p '{{ item.key }}' -v vSwitch0"
+  command: "{{ pgmod }} add -p '{{ item.key }}' -v {{ item.value.vswitch | d(vswitch_def) }}"
   with_dict: "{{ esxi_portgroups }}"
   when: item.key not in portgroups
 
@@ -31,7 +31,7 @@
   when: item not in esxi_portgroups
 
 - name: (network) delete extra portgroups
-  command: "{{ pgmod }} remove -p '{{ item.key }}' -v vSwitch0"
+  command: "{{ pgmod }} remove -p '{{ item.key }}' -v {{ item.value.vswitch | d(vswitch_def) }}"
   with_dict: "{{ portgroups }}"
   when: (item.key not in esxi_portgroups) and (item.value.clients|int == 0)
   # loop_control does not work with "command"
