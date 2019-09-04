@@ -54,7 +54,10 @@
 #     - use -e 'direct_scp=true push_scp=true' to reverse direction of copy, i.e
 #       to scp from source host to destination (sometimes firewalls beteen hosts are
 #       less restrictive in that direction)
-# - ansible 2.2 "replace" is not compatible with python 3, use 2.3
+# - ansible 2.2 "replace" is not compatible with python 3
+#   - use 2.3 (it is ok)
+#   - for 2.2 fix ./lib/python2.7/site-packages/ansible/modules/core/files/replace.py
+#   - fixed module is included
 # - required local modules are "netaddr" and "dnspython"
 
 - hosts: all
@@ -253,7 +256,7 @@
       shell:
         vmkfstools -K {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmdk
       when: convert_to_thin
-
+ 
     - name: add OVF params to VM config
       lineinfile:
         dest: "{{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmx"
