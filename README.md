@@ -1,16 +1,16 @@
 
 Ansible has some great modules for VMware vCenter (especially in 2.5), but none for
 managing standalone ESXi hosts. There are many cases when full vCenter infrastructure
-is not required (and web-based Host UI is quite enough for administrative tasks).
+is not required and web-based Host UI is quite enough for routine administrative tasks.
 
-Modules, roles and playbooks presented here allow to manageme standalone ESXi hosts
-(although hosts under vCenter are ok too) with SSH connection, usually with
+Modules, roles and playbooks presented here allow to manage standalone ESXi hosts
+(although hosts under vCenter are ok too) with direct SSH connection, usually with
 transparent key-based authentication.
 
 # Contents of repository
 
 - role to configure ESXi host (`roles/hostconf_esxi`)
-- playbooks to deploy new VM on ESXi host (in `vm_deploy/`)
+- playbooks to deploy new VMs to ESXi host (in `vm_deploy/`)
     - by uploading (template) VM from some other host (`upload_clone`)
     - or by cloning local VM (`clone_local`)
 - modules used by role and deployment playbook
@@ -21,7 +21,7 @@ transparent key-based authentication.
     - `split`: split string into a list
     - `todict`: convert a list of records into a dictionary, using specified field as a key
 - example playbook to update ESXi host with offline bundle (`update_esxi.yaml`)
-- helper script to get vault pass from macOs keychain (`get_vault_pass.esxi.sh`)
+- helper script to get vault pass from macOS keychain (`get_vault_pass.esxi.sh`)
 
 # `hostconf-esxi` role
 
