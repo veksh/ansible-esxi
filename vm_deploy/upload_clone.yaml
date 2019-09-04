@@ -248,28 +248,10 @@
       delegate_to: "{{ src_vm.server }}"
       when: direct_scp and push_scp
 
-    # convert to thin if option is set: copy, rename to orig
-    # copy thick-thick: 1:44 (10G)
-    #  : vmkfstools -i phoenix11-u1.vmdk -d thin thin-phoenix11.vmdk
-    #  : rm phoenix11-u1.vmdk phoenix11-u1-flat.vmdk
-    #  : vmkfstools -E thin-phoenix11.vmdk phoenix11-u1.vmdk
-    # no ": <" for multiline is ok (and even required for different indentation)
-    # 0:57 for 10G conversion
-    - name: copy VM disk to thin
+    # convert by punching holes
+    - name: convert VM disk to thin
       shell:
-        vmkfstools -i {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmdk
-              -d thin {{ dst_vm.path }}/{{ dst_vm.name }}/thin-{{ dst_vm.name }}.vmdk
-      when: convert_to_thin
-
-    - name: clean up original VM disk files
-      shell:
-        vmkfstools -U {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmdk
-      when: convert_to_thin
-
-    - name: copy thin VM disks back
-      shell:
-        vmkfstools -E {{ dst_vm.path }}/{{ dst_vm.name }}/thin-{{ dst_vm.name }}.vmdk
-                      {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmdk
+        vmkfstools -K {{ dst_vm.path }}/{{ dst_vm.name }}/{{ dst_vm.name }}.vmdk
       when: convert_to_thin
 
     - name: add OVF params to VM config
