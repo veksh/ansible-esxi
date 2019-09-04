@@ -81,11 +81,11 @@
       cpus:   "{{ vm_cpus | default(dst_vm_cpus) | default('') }}"
       mem:    "{{ vm_mem  | default(dst_vm_mem)  | default('') }}"
       # full format: "10G,nest-test-apps"; short: just "10G" (same datastore as VM)
-      disk2_size: "{{ dsk2 | regex_replace('^([0-9]+[KGM]).*$', '\\1') if dsk2 != '' else '' }}"
+      disk2_size: "{{ dsk2 | regex_replace('^([0-9]+[KGMkgm]).*$', '\\1') if dsk2 != '' else '' }}"
       # default: same as VM if not in arg
       disk2_path: "{{ '/vmfs/volumes/' +
           ((',' in dsk2) | ternary (
-            dsk2 | regex_replace('^[0-9]+[KGM],?', ''),
+            dsk2 | regex_replace('^[0-9]+[KGMkgm],?', ''),
             vm_vol | default(dst_vm_vol) | default(default_vol))
           ) if dsk2 != '' else '' }}"
     dst_ip_addr: "{{ vm_ip | default(dst_vm_ip) | default(lookup('dig', dst_vm.name + '.' + ansible_dns.domain ))}}"
