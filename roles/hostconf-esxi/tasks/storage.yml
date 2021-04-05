@@ -2,7 +2,7 @@
 
 - name: (storage) get filesystems list
   # also: "esxcli storage vmfs extent list"
-  shell: "esxcfg-scsidevs --vmfs | awk '{print $1, $5}' | sed -e 's/:/ /'"
+  shell: "esxcfg-scsidevs --vmfs | grep -v OSDATA | awk '{print $1, $5}' | sed -e 's/:/ /'"
   register: fs_list_res
   changed_when: false
   check_mode: false
@@ -16,7 +16,7 @@
 
 - name: (storage) get filesystems usage
   # a bit complex :)
-  shell: "for f in $(find /vmfs/volumes/* -prune -type l | awk -F/ '{print $4}'); do echo -n $f '' && ls /vmfs/volumes/$f/ | wc -l; done"
+  shell: "for f in $(esxcli storage filesystem list|grep VMFS|sed 's/  */ /g'|awk -F' ' '{print $2}'); do echo -n $f '' && ls /vmfs/volumes/$f/|wc -l;done"
   register: fs_usage_res
   changed_when: false
   check_mode: false
