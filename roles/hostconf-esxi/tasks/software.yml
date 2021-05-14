@@ -17,3 +17,26 @@
     # present for install and not update (faster check)
     state: latest
   with_items: "{{ vib_list|d([]) }}"
+
+- block:
+
+  - name: (software) check slpd ruleset state
+    command: "esxcli network firewall ruleset list --ruleset-id=CIMSLP"
+    register: slpd_ruleset_state
+    changed_when: false
+    check_mode: false
+
+  - name: (software) disable access to slpd through firewall
+    command: "esxcli network firewall ruleset set --ruleset-id=CIMSLP --enabled=false"
+    when: slpd_ruleset_state.stdout.find("false") == -1
+
+  # better to check it like "chkconfig --list slpd"
+  - name: (software) disable slpd startup
+    command: "chkconfig slpd off"
+    when: slpd_ruleset_state.stdout.find("false") == -1
+
+  - name: (software) stop slpd
+    command: "/etc/init.d/slpd stop"
+    when: slpd_ruleset_state.stdout.find("false") == -1
+
+  when: disable_slpd|d(false)
