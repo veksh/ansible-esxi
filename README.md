@@ -49,6 +49,8 @@ This role takes care of many aspects of standalone ESXi server configuration lik
   default `verbose` to `info`
 - certificates for Host UI and SSL communication (if present)
 - install or update specified VIBs
+- [disable SLP](https://kb.vmware.com/s/article/76372), dangerous and mostly useless in smaller 
+  deployments (set `disable_slpd: true` in host vars to turn it off)
 
 Only requirement is correctly configured network (especially uplinks) and reachability
 over ssh with root password. ESXi must be reasonably recent (6.0+, although some
