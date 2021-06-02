@@ -19,26 +19,27 @@
   command: "esxcli network firewall ruleset set --ruleset-id=syslog --enabled=true"
   when: syslog_ruleset_state.stdout.find("false") != -1
 
+# better use "xml" for that: will not get added if completely missed
 - name: (logging) set vpxa logging level to info
   lineinfile:
     dest: "/etc/vmware/vpxa/vpxa.cfg"
-    insertafter: "^  <log>"
-    regexp:  "^    <level>.*</level>$"
+    insertafter: "^\\s+<(!-- default log level --|log)>"
+    regexp:  "^\\s+<level>[a-z]+</level>$"
     line:     "    <level>info</level>"
   notify: restart vpxa
 
 - name: (logging) set rhttpproxy logging level to info
   lineinfile:
     dest: "/etc/vmware/rhttpproxy/config.xml"
-    insertafter: "^      <!-- default log level -->"
-    regexp:  "^      <level>.*</level>$"
+    insertafter: "^\\s+<(!-- default log level --|log)>"
+    regexp:  "^\\s+<level>[a-z]+</level>$"
     line:     "      <level>info</level>"
   notify: restart rhttpproxy
 
 - name: (logging) set hostd logging level to info
   lineinfile:
     dest: "/etc/vmware/hostd/config.xml"
-    insertafter: "^      <!-- default log level -->"
-    regexp:  "^      <level>.*</level>$"
+    insertafter: "^\\s+<(!-- default log level --|log)>"
+    regexp:  "^\\s+<level>[a-z]+</level>$"
     line:     "      <level>info</level>"
   notify: restart hostd
